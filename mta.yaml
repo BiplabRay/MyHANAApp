@@ -1,0 +1,169 @@
+_schema-version: "3.1"
+ID: MyHANAApp
+description: A simple CAP project.
+version: 1.0.0
+modules:
+- name: MyHANAApp-srv
+  type: nodejs
+  path: gen/srv
+  requires:
+  - name: MyHANAApp-auth
+  - name: MyHANAApp-dev
+  provides:
+  - name: srv-api
+    properties:
+      srv-url: ${default-url}
+  parameters:
+  #---
+    host: ${appname}
+  #---
+    buildpack: nodejs_buildpack
+  build-parameters:
+    builder: npm
+- name: MyHANAApp-db-deployer
+  type: hdb
+  path: gen/db
+  requires:
+  - name: MyHANAApp-dev
+  parameters:
+    buildpack: nodejs_buildpack
+- name: MyHANAApp
+  type: approuter.nodejs
+  path: app/
+  requires:
+  - name: srv-api
+    group: destinations
+    properties:
+      forwardAuthToken: true
+      name: srv-api
+      url: ~{srv-url}
+  - name: MyHANAApp-auth
+  - name: MyHANAApp-destination-service
+    group: destinations
+    properties:
+      forwardAuthToken: false
+      name: ui5
+      url: https://ui5.sap.com  
+  parameters:
+    disk-quota: 1024M
+    keep-existing-routes: true
+    memory: 256M
+  build-parameters:
+    ignore:
+    - default-env.json
+    - .env
+#-----
+- name: MyHANAApp-destination-content
+  type: com.sap.application.content
+  requires:
+  - name: MyHANAApp-destination-service
+    parameters:
+      content-target: true
+  - name: MyHANAApp_html_repo_host
+    parameters:
+      service-key:
+        name: MyHANAApp_html_repo_host-key
+  - name: MyHANAApp-auth
+    parameters:
+      service-key:
+        name: MyHANAApp-dev
+  parameters:
+    content:
+      instance:
+        destinations:
+        - Name: MyHANAApp-management_html_repo_host
+          ServiceInstanceName: MyHANAApp-html5-app-host-service
+          ServiceKeyName: MyHANAApp_html_repo_host-key
+          sap.cloud.service: interactionApp        
+        existing_destinations_policy: update
+  build-parameters:
+    no-source: true
+#-----    
+- name: MyHANAApp-app-content
+  type: com.sap.application.content
+  path: .
+  requires:
+  - name: MyHANAApp_html_repo_host
+    parameters:
+      content-target: true
+  build-parameters:
+    build-result: resources
+    requires:
+    - artifacts:
+      - combiplabinteraction.zip
+      name: combiplabinteraction
+      target-path: resources/
+- name: combiplabinteraction
+  type: html5
+  path: app/interaction
+  build-parameters:
+    build-result: dist
+    builder: custom
+    commands:
+    - npm install
+    - npm run build:cf
+    supported-platforms: []
+resources:
+- name: MyHANAApp-auth
+  type: org.cloudfoundry.managed-service
+  parameters:
+    config:
+      tenant-mode: dedicated
+      xsappname: MyHANAApp
+    path: ./xs-security.json
+    service: xsuaa
+    service-plan: application
+- name: MyHANAApp-dev
+  type: com.sap.xs.hdi-container
+  parameters:
+    service: hana
+    service-plan: hdi-shared
+- name: MyHANAApp_html_repo_host
+  type: org.cloudfoundry.managed-service
+  parameters:
+    service: html5-apps-repo
+    #---
+    service-name: MyHANAApp-html5-app-host-service
+    #---
+    service-plan: app-host
+- name: MyHANAApp-destination-service
+  type: org.cloudfoundry.managed-service
+  parameters:
+    config:
+      HTML5Runtime_enabled: true
+      init_data:
+        instance:
+          destinations:
+          - Authentication: NoAuthentication
+            Name: ui5
+            ProxyType: Internet
+            Type: HTTP
+            URL: https://ui5.sap.com
+          - Authentication: NoAuthentication
+            HTML5.DynamicDestination: true
+            HTML5.ForwardAuthToken: true
+            Name: MyHANAApp-srv-api
+            ProxyType: Internet
+            Type: HTTP
+            URL: https://${appname}.${default-domain}
+          - Authentication: OAuth2UserTokenExchange
+            Name: MyHANAApp_uaa_fiori
+            ServiceInstanceName: MyHANAApp-xsuaa-service
+            ServiceKeyName: MyHANAApp-auth
+            sap.cloud.service: interactionApp
+          existing_destinations_policy: update
+      version: 1.0.0
+    service: destination
+    service-name: MyHANAApp-destination-service
+    service-plan: lite
+  requires:
+    - name: srv-api
+parameters:
+  deploy_mode: html5-repo
+  enable-parallel-deployments: true
+  appname: unique-0x703415
+build-parameters:
+  before-all:
+  - builder: custom
+    commands:
+    - npx cds build --production
